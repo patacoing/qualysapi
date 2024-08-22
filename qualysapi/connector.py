@@ -118,22 +118,25 @@ class QGConnector(api_actions.QGActions):
         """ Return base API url string for the QualysGuard api_version and server.
 
         """
+        if "https://" not in self.server:
+            url = f"https://{self.server}"
+
         # Set base url depending on API version.
         if api_version == 1:
             # QualysGuard API v1 url.
-            url = f"https://{self.server}/msp/"
+            url += f"/msp/"
         elif api_version == 2:
             # QualysGuard API v2 url.
-            url = f"https://{self.server}/"
+            url += f"/"
         elif api_version == "was":
             # QualysGuard REST v3 API url (Portal API).
-            url = f"https://{self.server}/qps/rest/3.0/"
+            url += f"/qps/rest/3.0/"
         elif api_version == "am":
             # QualysGuard REST v2 API url (Portal API).
-            url = f"https://{self.server}/qps/rest/2.0/"
+            url += f"/qps/rest/2.0/"
         elif api_version == "am2":
             # QualysGuard REST v2 API url (Portal API).
-            url = f"https://{self.server}/qps/rest/2.0/"
+            url += f"/qps/rest/2.0/"
         else:
             raise Exception(f"Unknown QualysGuard API Version Number {api_version}")
         logger.debug("Base url =\n%s", url)
