@@ -2,6 +2,10 @@ __author__ = "Parag Baxi <parag.baxi@gmail.com>"
 __copyright__ = "Copyright 2013, Parag Baxi"
 __license__ = "Apache License 2.0"
 
+import ssl
+
+import certifi
+
 """ Module that contains classes for setting up connections to QualysGuard API
 and requesting data from it.
 """
@@ -232,6 +236,49 @@ class QGConnector(api_actions.QGActions):
                 data = etree.tostring(data)
                 logger.debug("Converted:\n%s", data)
         return data
+
+    def build_async_request(self, api_call, data=None, api_version=None, http_method=None):
+        logger.debug("api_call =\n%s", api_call)
+        logger.debug("api_version =\n%s", api_version)
+        logger.debug("data %s =\n %s", type(data), str(data))
+        logger.debug("http_method =\n%s", http_method)
+
+        api_call = self.preformat_call(api_call)
+        api_version = self.format_api_version(api_version) if api_version else self.which_api_version(api_call)
+        # Set up base url.
+        url = self.url_api_version(api_version)
+        # Set up headers.
+        headers = {
+            "X-Requested-With": f"Parag Baxi QualysAPI (python) v{qualysapi.version.__version__}"
+        }
+        logger.debug("headers =\n%s", str(headers))
+        # Portal API support XML/JSON exchange format (JSON for assets tagging and management).
+        # The data exchange format must be specified in the headers.
+        if api_version in ("am", "was", "am2"):
+            if self.data_exchange_format == 'xml':
+                headers["Content-type"] = "text/xml"
+                headers["Accept"] = "text/xml"
+            if self.data_exchange_format == 'json':
+                headers["Content-type"] = "application/json"
+                headers["Accept"] = "application/json"
+        # Set up http request method, if not specified.
+        if not http_method:
+            http_method = self.format_http_method(api_version, api_call, data)
+        logger.debug("http_method =\n%s", http_method)
+        # Format API call.
+        api_call = self.format_call(api_version, api_call)
+        logger.debug("api_call =\n%s", api_call)
+        # Append api_call to url.
+        url += api_call
+        # Format data, if applicable.
+        if data is not None:
+            data = aiohttp.FormData(data)
+
+        logger.debug("url =\n%s", str(url))
+        logger.debug("data =\n%s", str(data))
+        logger.debug("headers =\n%s", str(headers))
+
+        return url, data, headers, http_method
 
     def build_request(self, api_call, data=None, api_version=None, http_method=None):
         logger.debug("api_call =\n%s", api_call)
@@ -595,6 +642,7 @@ class QGConnector(api_actions.QGActions):
         verify=True,
     ):
         """ Return QualysGuard API response asynchronously."""
+        sslcontext = ssl.create_default_context(cafile=certifi.where())
 
         async with aiohttp.ClientSession() as session:
             logger.debug("concurrent_scans_retries =\n%s", str(concurrent_scans_retries))
@@ -602,11 +650,11 @@ class QGConnector(api_actions.QGActions):
             concurrent_scans_retries = int(concurrent_scans_retries)
             concurrent_scans_retry_delay = int(concurrent_scans_retry_delay)
 
-            url, data, headers, http_method = self.build_request(api_call, data, api_version, http_method)
+            url, data, headers, http_method = self.build_async_request(api_call, data, api_version, http_method)
 
             # Make request at least once (more if concurrent_retry is enabled).
             retries = 0
-            #
+
             # set a warning threshold for the rate limit
             rate_warn_threshold = 10
             while retries <= concurrent_scans_retries:
@@ -620,8 +668,9 @@ class QGConnector(api_actions.QGActions):
                 request = await getattr(session, http_method)(
                     url,
                     data=data,
+                    auth=aiohttp.BasicAuth(*self.auth),
                     headers=headers,
-                    verify_ssl=verify,
+                    ssl=sslcontext if verify else False,
                     proxy=self.proxies,
                 )
                 request = await request.__aenter__()
@@ -664,8 +713,9 @@ class QGConnector(api_actions.QGActions):
                             request = await getattr(session, http_method)(
                                 url,
                                 data=data,
+                                auth=aiohttp.BasicAuth(*self.auth),
                                 headers=headers,
-                                verify_ssl=verify,
+                                ssl=sslcontext if verify else False,
                                 proxy=self.proxies,
                             )
 
@@ -700,8 +750,9 @@ class QGConnector(api_actions.QGActions):
                             request = await getattr(session, http_method)(
                                 url,
                                 data=data,
+                                auth=aiohttp.BasicAuth(*self.auth),
                                 headers=headers,
-                                verify_ssl=verify,
+                                ssl=sslcontext if verify else False,
                                 proxy=self.proxies,
                             )
 
@@ -732,14 +783,10 @@ class QGConnector(api_actions.QGActions):
                             "ATTENTION! RATE LIMIT HAS BEEN REACHED (remaining api calls = %s)!",
                             self.rate_limit_remaining[api_call],
                         )
-                except KeyError as e:
-                    # Likely a bad api_call.
+                except KeyError as e:  # Likely a bad api_call.
                     logger.debug(e)
-                    pass
-                except TypeError as e:
-                    # Likely an asset search api_call.
+                except TypeError as e:  # Likely an asset search api_call.
                     logger.debug(e)
-                    pass
                 # Response received.
                 response = await request.text()
 
@@ -780,7 +827,7 @@ class QGConnector(api_actions.QGActions):
                 logger.error("Error! Received a 4XX client error or 5XX server error response.")
                 logger.error("Content = \n%s", response)
                 logger.error("Headers = \n%s", str(request.headers))
-                #request.raise_for_status()
+                request.raise_for_status()
             if '<RETURN status="FAILED" number="2007">' in response:
                 logger.error("Error! Your IP address is not in the list of secure IPs." \
                              + " Manager must include this IP (QualysGuard VM > Users > Security).")
